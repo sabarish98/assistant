@@ -51,7 +51,10 @@ class SearchFilter(BaseModel):
     language: Optional[str] = Field(None, description="Document language")
     
     # Search parameters
-    similarity_threshold: float = Field(default=0.7, ge=0.0, le=1.0, description="Similarity threshold")
+    # ChromaDB returns L2 distances converted via (1 - distance); realistic
+    # scores for this metric sit in the 0.0–0.4 range, so the default is
+    # intentionally low. Raise it once you switch to cosine distance.
+    similarity_threshold: float = Field(default=0.0, ge=0.0, le=1.0, description="Similarity threshold")
     max_results: int = Field(default=10, ge=1, le=100, description="Maximum results")
     
     @validator('max_word_count')

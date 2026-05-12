@@ -38,7 +38,8 @@ class EmbeddingManager:
             try:
                 self._model = SentenceTransformer(
                     self.model_name,
-                    cache_folder=str(self._model_cache_dir)
+                    cache_folder=str(self._model_cache_dir),
+                    local_files_only=True,
                 )
                 
                 load_time = time.time() - start_time
