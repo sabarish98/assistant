@@ -274,41 +274,44 @@ class TextProcessor:
 - Comprehensive text statistics
 - Readability estimation
 
-### 6. Document Chunking (`ingestion/chunking.py`)
+### 6. Document Chunking (`ingestion/chunking.py`) - **LangChain Integrated**
 
-**Purpose**: Intelligent document splitting optimized for vector search.
+**Purpose**: Intelligent document splitting using LangChain text splitters with custom enhancements.
 
-**Chunking Strategies**:
+**LangChain-Based Strategies** (Primary):
 
 ```python
 class ChunkingStrategy(str, Enum):
-    FIXED_SIZE = "fixed_size"           # Fixed character/token chunks
-    SENTENCE_BASED = "sentence_based"   # Sentence boundary respect
-    PARAGRAPH_BASED = "paragraph_based" # Paragraph-based splitting
-    SEMANTIC_SECTIONS = "semantic_sections"  # Header-based sections  
-    OVERLAP_SLIDING = "overlap_sliding" # Sliding window with overlap
+    RECURSIVE_CHARACTER = "recursive_character"     # LangChain's best general-purpose
+    CHARACTER = "character"                         # Simple character-based splitting
+    TOKEN_BASED = "token_based"                    # Token-aware splitting
+    MARKDOWN_HEADERS = "markdown_headers"          # Markdown structure-aware
+    SENTENCE_TRANSFORMERS = "sentence_transformers" # Embedding-optimized
+    # Custom strategies (preserved for specialized use cases)
+    SEMANTIC_SECTIONS = "semantic_sections"        # Custom header detection
+    OVERLAP_SLIDING = "overlap_sliding"            # Custom sliding window
 ```
 
-**Configuration Options**:
+**Enhanced Configuration**:
 ```python
 @dataclass
 class ChunkingConfig:
-    strategy: ChunkingStrategy = ChunkingStrategy.OVERLAP_SLIDING
-    chunk_size: int = 500
-    overlap_size: int = 50  
+    strategy: ChunkingStrategy = ChunkingStrategy.RECURSIVE_CHARACTER  # Better default
+    chunk_size: int = 1000              # Increased for better context
+    chunk_overlap: int = 200            # LangChain standard naming
+    separators: Optional[List[str]] = None  # Customizable separators
+    model_name: str = "gpt-3.5-turbo"  # For token counting
     min_chunk_size: int = 50
-    max_chunk_size: int = 2000
-    respect_sentence_boundaries: bool = True
-    respect_paragraph_boundaries: bool = True
+    max_chunk_size: int = 4000
 ```
 
 **Advanced Features**:
-- Multiple chunking strategies for different content types
-- Overlap calculation and tracking
-- Sentence boundary respect
-- Configurable size limits
-- Semantic section detection
-- Performance optimization
+- **Battle-tested LangChain algorithms** for reliability
+- **Cached splitters** for performance optimization
+- **Token-aware chunking** for LLM compatibility
+- **Structure-aware processing** for markdown documents
+- **Custom strategies preserved** for specialized needs
+- **Consistent output format** with DocumentChunk objects
 
 ### 7. Embedding Management (`storage/embeddings.py`)
 
@@ -420,11 +423,11 @@ class DocumentLoader:
     ├── Basic PII detection
     └── Structure analysis
     ↓
-✂️ Document Chunking
-    ├── Choose strategy (overlap_sliding, sentence_based, etc.)
-    ├── Split content into chunks
-    ├── Calculate overlaps
-    └── Create DocumentChunk objects
+✂️ Document Chunking (LangChain + Custom)
+    ├── Choose strategy (recursive_character, markdown_headers, etc.)
+    ├── Use cached LangChain text splitters for performance
+    ├── Apply intelligent separators and overlap logic
+    └── Convert to DocumentChunk objects with metadata
     ↓ 
 🔢 Embedding Generation
     ├── Load sentence transformer model
@@ -496,6 +499,7 @@ class DocumentLoader:
 |-----------|---------|---------|----------|
 | **LLM Integration** | `langchain` | >=0.3.0 | LLM abstractions and chains |
 | **LLM Integration** | `langchain-ollama` | >=0.2.0 | Ollama-specific integrations |
+| **Text Processing** | `langchain-text-splitters` | >=1.1.0 | Production-grade text chunking |
 | **Workflow Engine** | `langgraph` | >=0.2.0 | Workflow orchestration (Stage 2) |
 | **Vector Database** | `chromadb` | >=0.5.0 | Persistent vector storage |
 | **Embeddings** | `sentence-transformers` | >=3.0.0 | Text embedding generation |
@@ -612,18 +616,23 @@ playground/
 
 ## Key Design Decisions
 
-### 1. **Custom vs LangChain Components**
+### 1. **LangChain Integration for Text Processing** (Updated)
 
-**Decision**: Implement custom chunking and embedding management instead of using LangChain's built-in components.
+**Decision**: Integrate LangChain text splitters while preserving custom functionality and educational value.
 
 **Rationale**:
-- **Educational Value**: Deep understanding of text processing fundamentals
-- **Flexibility**: Multiple chunking strategies for experimentation
-- **Control**: Fine-grained control over chunk metadata and overlaps  
-- **Performance**: Optimized for our specific use case
-- **Integration**: Tight integration with our Pydantic schemas
+- **Best of Both Worlds**: Learned fundamentals by building from scratch, now leverage battle-tested tools
+- **Production Reliability**: LangChain splitters used in thousands of production systems
+- **Performance**: Cached splitters and optimized algorithms
+- **Standards Compliance**: Following LangChain ecosystem conventions
+- **Preserved Learning**: Custom strategies kept for specialized use cases
 
-**Trade-off**: More code to maintain vs deeper understanding and flexibility
+**Implementation**:
+- **Primary**: LangChain text splitters (RecursiveCharacterTextSplitter, TokenTextSplitter, etc.)
+- **Secondary**: Custom strategies for specialized needs (semantic sections, fine-tuned overlap)
+- **Integration**: Consistent DocumentChunk output with rich metadata
+
+**Trade-off**: Dependency on LangChain vs proven reliability and community support
 
 ### 2. **Pydantic for All Data Models**
 
@@ -787,7 +796,7 @@ Based on test results:
 ### 🎯 **Tested Scenarios**
 
 ✅ **Text Processing**: Multiple document formats, large documents  
-✅ **Chunking Strategies**: All 4 strategies tested and compared  
+✅ **Chunking Strategies**: All 7 strategies tested (5 LangChain + 2 custom)  
 ✅ **Vector Search**: Semantic similarity, metadata filtering  
 ✅ **File Loading**: PDF, DOCX, TXT, Markdown  
 ✅ **Error Handling**: Network issues, invalid files, corrupt data  
@@ -1005,6 +1014,14 @@ LOG_FILE=./logs/research_assistant.log
 
 ---
 
-This comprehensive overview covers the current state of your AI Research Assistant project. The foundation is solid and ready for Stage 2 implementation. The modular architecture will make it easy to add the LangGraph workflows and CLI interface while maintaining the high quality and type safety you've established.
+## Additional Documentation
+
+### 📚 **Specialized Guides**
+
+- **[LangChain Integration Guide](./LANGCHAIN_INTEGRATION.md)**: Detailed explanation of how LangChain text splitters were integrated into the chunking pipeline, including architecture decisions, performance comparisons, and usage examples.
+
+---
+
+This comprehensive overview covers the current state of your AI Research Assistant project. The foundation is solid with **LangChain integration complete** for text processing and ready for Stage 2 implementation. The hybrid approach (LangChain for reliability + custom for specialization) provides the best of both worlds while maintaining the high quality and type safety you've established.
 
 Ready to proceed with Stage 2 when you are!

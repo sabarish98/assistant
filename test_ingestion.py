@@ -89,47 +89,63 @@ def test_different_chunking_strategies():
     Autonomous vehicles rely heavily on AI for navigation and safety.
     """
     
-    strategies_to_test = [
-        ChunkingStrategy.FIXED_SIZE,
-        ChunkingStrategy.SENTENCE_BASED,
-        ChunkingStrategy.PARAGRAPH_BASED,
+    # Test both LangChain and custom strategies
+    langchain_strategies = [
+        ChunkingStrategy.RECURSIVE_CHARACTER,
+        ChunkingStrategy.CHARACTER,
+        ChunkingStrategy.MARKDOWN_HEADERS,
+        ChunkingStrategy.TOKEN_BASED
+    ]
+    
+    custom_strategies = [
+        ChunkingStrategy.SEMANTIC_SECTIONS,
         ChunkingStrategy.OVERLAP_SLIDING
     ]
+    
+    strategies_to_test = langchain_strategies + custom_strategies
     
     results = {}
     
     for strategy in strategies_to_test:
-        print(f"\n   Testing {strategy.value}...")
+        strategy_name = strategy.value.replace('_', ' ').title()
+        strategy_type = "LangChain" if strategy in langchain_strategies else "Custom"
+        
+        print(f"\n   Testing {strategy_name} ({strategy_type})...")
         
         try:
-            # Update chunking strategy
-            document_loader.update_chunking_strategy(strategy, chunk_size=200)
+            # Update chunking strategy with appropriate chunk size
+            chunk_size = 800 if strategy in langchain_strategies else 200
+            document_loader.update_chunking_strategy(strategy, chunk_size=chunk_size)
             
             # Process document
             document = document_loader.load_from_text(
                 content=sample_content,
-                title=f"Test Document - {strategy.value}",
+                title=f"Test Document - {strategy_name}",
                 source=f"test_{strategy.value}"
             )
             
             results[strategy.value] = {
                 'chunks': len(document.chunks),
-                'avg_chunk_size': sum(len(chunk.content) for chunk in document.chunks) / len(document.chunks),
-                'status': document.status.value
+                'avg_chunk_size': sum(len(chunk.content) for chunk in document.chunks) / len(document.chunks) if document.chunks else 0,
+                'status': document.status.value,
+                'type': strategy_type
             }
             
-            print(f"   ✅ {strategy.value}: {len(document.chunks)} chunks created")
+            print(f"   ✅ {strategy_name}: {len(document.chunks)} chunks created")
             
         except Exception as e:
-            print(f"   ❌ {strategy.value} failed: {e}")
-            results[strategy.value] = {'error': str(e)}
+            print(f"   ❌ {strategy_name} failed: {e}")
+            results[strategy.value] = {'error': str(e), 'type': strategy_type}
     
     print(f"\n📊 Chunking Strategy Results:")
     for strategy, result in results.items():
+        strategy_name = strategy.replace('_', ' ').title()
         if 'error' not in result:
-            print(f"   {strategy}: {result['chunks']} chunks, avg size: {result['avg_chunk_size']:.0f} chars")
+            strategy_type = result.get('type', 'Unknown')
+            print(f"   {strategy_name} ({strategy_type}): {result['chunks']} chunks, avg size: {result['avg_chunk_size']:.0f} chars")
         else:
-            print(f"   {strategy}: ERROR - {result['error']}")
+            strategy_type = result.get('type', 'Unknown')
+            print(f"   {strategy_name} ({strategy_type}): ERROR - {result['error']}")
     
     return results
 

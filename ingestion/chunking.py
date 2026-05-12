@@ -1,42 +1,61 @@
-"""Document chunking strategies for optimal vector storage."""
+"""Document chunking strategies using LangChain text splitters with custom enhancements."""
 
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional, Tuple, Any
 from enum import Enum
 from dataclasses import dataclass
 import re
 from uuid import uuid4
+
+# LangChain text splitters
+from langchain_text_splitters import (
+    RecursiveCharacterTextSplitter,
+    CharacterTextSplitter, 
+    MarkdownHeaderTextSplitter,
+    TokenTextSplitter,
+    SentenceTransformersTokenTextSplitter
+)
 
 from schemas.document import DocumentChunk
 from core.logger import app_logger
 
 
 class ChunkingStrategy(str, Enum):
-    """Available chunking strategies."""
-    FIXED_SIZE = "fixed_size"
-    SENTENCE_BASED = "sentence_based"
-    PARAGRAPH_BASED = "paragraph_based"  
-    SEMANTIC_SECTIONS = "semantic_sections"
-    OVERLAP_SLIDING = "overlap_sliding"
+    """Available chunking strategies using LangChain text splitters."""
+    RECURSIVE_CHARACTER = "recursive_character"  # LangChain's best general-purpose splitter
+    CHARACTER = "character"                      # Simple character-based splitting
+    TOKEN_BASED = "token_based"                 # Token-aware splitting
+    MARKDOWN_HEADERS = "markdown_headers"       # Markdown structure-aware splitting
+    SENTENCE_TRANSFORMERS = "sentence_transformers"  # Sentence transformer token-based
+    # Legacy custom strategies (kept for backward compatibility)
+    SEMANTIC_SECTIONS = "semantic_sections"     # Custom implementation for headers
+    OVERLAP_SLIDING = "overlap_sliding"         # Custom sliding window
 
 
 @dataclass
 class ChunkingConfig:
     """Configuration for chunking strategies."""
-    strategy: ChunkingStrategy = ChunkingStrategy.OVERLAP_SLIDING
-    chunk_size: int = 500  # Characters or tokens
-    overlap_size: int = 50  # Overlap between chunks
+    strategy: ChunkingStrategy = ChunkingStrategy.RECURSIVE_CHARACTER
+    chunk_size: int = 1000  # Characters or tokens (increased for better context)
+    chunk_overlap: int = 200  # Overlap between chunks (LangChain standard naming)
     min_chunk_size: int = 50  # Minimum chunk size
-    max_chunk_size: int = 2000  # Maximum chunk size
-    respect_sentence_boundaries: bool = True
-    respect_paragraph_boundaries: bool = True
+    max_chunk_size: int = 4000  # Maximum chunk size
+    # LangChain-specific separators for RecursiveCharacterTextSplitter
+    separators: Optional[List[str]] = None  # None uses LangChain defaults
+    # Custom options
+    respect_sentence_boundaries: bool = True  # For custom strategies
+    respect_paragraph_boundaries: bool = True  # For custom strategies
+    # Token-based settings
+    model_name: str = "gpt-3.5-turbo"  # For token counting
+    encoding_name: Optional[str] = None  # For token text splitter
 
 
 class DocumentChunker:
-    """Intelligent document chunking with multiple strategies."""
+    """Intelligent document chunking using LangChain text splitters with custom enhancements."""
     
     def __init__(self, config: Optional[ChunkingConfig] = None):
         self.config = config or ChunkingConfig()
-        app_logger.info(f"Initialized chunker with strategy: {self.config.strategy}")
+        self._splitter_cache = {}  # Cache splitters for reuse
+        app_logger.info(f"Initialized LangChain-based chunker with strategy: {self.config.strategy}")
     
     def chunk_document(
         self, 
@@ -44,7 +63,7 @@ class DocumentChunker:
         content: str, 
         strategy: Optional[ChunkingStrategy] = None
     ) -> List[DocumentChunk]:
-        """Chunk document using specified or default strategy."""
+        """Chunk document using LangChain text splitters or custom strategies."""
         
         if not content.strip():
             app_logger.warning("Empty content provided for chunking")
@@ -52,39 +71,30 @@ class DocumentChunker:
         
         strategy = strategy or self.config.strategy
         
-        app_logger.info(f"Chunking document {document_id} with strategy: {strategy}")
+        app_logger.info(f"Chunking document {document_id} with LangChain strategy: {strategy}")
         
         try:
-            if strategy == ChunkingStrategy.FIXED_SIZE:
-                chunks = self._chunk_fixed_size(content)
-            elif strategy == ChunkingStrategy.SENTENCE_BASED:
-                chunks = self._chunk_by_sentences(content)
-            elif strategy == ChunkingStrategy.PARAGRAPH_BASED:
-                chunks = self._chunk_by_paragraphs(content)
+            # Get text chunks using appropriate splitter
+            if strategy == ChunkingStrategy.RECURSIVE_CHARACTER:
+                chunks = self._chunk_with_recursive_character(content)
+            elif strategy == ChunkingStrategy.CHARACTER:
+                chunks = self._chunk_with_character_splitter(content)
+            elif strategy == ChunkingStrategy.TOKEN_BASED:
+                chunks = self._chunk_with_token_splitter(content)
+            elif strategy == ChunkingStrategy.MARKDOWN_HEADERS:
+                chunks = self._chunk_with_markdown_headers(content)
+            elif strategy == ChunkingStrategy.SENTENCE_TRANSFORMERS:
+                chunks = self._chunk_with_sentence_transformers(content)
             elif strategy == ChunkingStrategy.SEMANTIC_SECTIONS:
-                chunks = self._chunk_by_semantic_sections(content)
+                chunks = self._chunk_by_semantic_sections_custom(content)  # Keep custom
             elif strategy == ChunkingStrategy.OVERLAP_SLIDING:
-                chunks = self._chunk_overlap_sliding(content)
+                chunks = self._chunk_overlap_sliding_custom(content)  # Keep custom
             else:
                 app_logger.error(f"Unknown chunking strategy: {strategy}")
                 return []
             
-            # Convert to DocumentChunk objects
-            document_chunks = []
-            for i, (chunk_content, start_pos, end_pos) in enumerate(chunks):
-                if len(chunk_content.strip()) >= self.config.min_chunk_size:
-                    chunk = DocumentChunk(
-                        chunk_id=f"{document_id}_chunk_{i}",
-                        document_id=document_id,
-                        content=chunk_content.strip(),
-                        chunk_index=i,
-                        start_char=start_pos,
-                        end_char=end_pos,
-                        word_count=len(chunk_content.split()),
-                        overlap_with_previous=self._calculate_overlap_previous(i, chunks),
-                        overlap_with_next=self._calculate_overlap_next(i, chunks)
-                    )
-                    document_chunks.append(chunk)
+            # Convert text chunks to DocumentChunk objects with metadata
+            document_chunks = self._create_document_chunks(document_id, content, chunks)
             
             app_logger.info(f"Created {len(document_chunks)} chunks for document {document_id}")
             return document_chunks
@@ -93,7 +103,172 @@ class DocumentChunker:
             app_logger.error(f"Error chunking document {document_id}: {e}")
             return []
     
-    def _chunk_fixed_size(self, content: str) -> List[Tuple[str, int, int]]:
+    def _get_recursive_character_splitter(self) -> RecursiveCharacterTextSplitter:
+        """Get cached RecursiveCharacterTextSplitter."""
+        cache_key = f"recursive_{self.config.chunk_size}_{self.config.chunk_overlap}"
+        
+        if cache_key not in self._splitter_cache:
+            separators = self.config.separators or [
+                "\n\n",  # Paragraph breaks
+                "\n",    # Line breaks
+                " ",     # Spaces
+                ""       # Character level
+            ]
+            
+            self._splitter_cache[cache_key] = RecursiveCharacterTextSplitter(
+                chunk_size=self.config.chunk_size,
+                chunk_overlap=self.config.chunk_overlap,
+                length_function=len,
+                separators=separators,
+                is_separator_regex=False,
+            )
+        
+        return self._splitter_cache[cache_key]
+    
+    def _get_character_splitter(self) -> CharacterTextSplitter:
+        """Get cached CharacterTextSplitter."""
+        cache_key = f"character_{self.config.chunk_size}_{self.config.chunk_overlap}"
+        
+        if cache_key not in self._splitter_cache:
+            self._splitter_cache[cache_key] = CharacterTextSplitter(
+                chunk_size=self.config.chunk_size,
+                chunk_overlap=self.config.chunk_overlap,
+                length_function=len,
+                separator="\n\n"  # Split on paragraphs by default
+            )
+        
+        return self._splitter_cache[cache_key]
+    
+    def _get_token_splitter(self) -> TokenTextSplitter:
+        """Get cached TokenTextSplitter."""
+        cache_key = f"token_{self.config.chunk_size}_{self.config.chunk_overlap}"
+        
+        if cache_key not in self._splitter_cache:
+            self._splitter_cache[cache_key] = TokenTextSplitter(
+                chunk_size=self.config.chunk_size,
+                chunk_overlap=self.config.chunk_overlap,
+                model_name=self.config.model_name,
+                encoding_name=self.config.encoding_name
+            )
+        
+        return self._splitter_cache[cache_key]
+    
+    def _get_sentence_transformers_splitter(self) -> SentenceTransformersTokenTextSplitter:
+        """Get cached SentenceTransformersTokenTextSplitter."""
+        cache_key = f"sentence_transformers_{self.config.chunk_size}_{self.config.chunk_overlap}"
+        
+        if cache_key not in self._splitter_cache:
+            self._splitter_cache[cache_key] = SentenceTransformersTokenTextSplitter(
+                chunk_overlap=self.config.chunk_overlap,
+                model_name="sentence-transformers/all-MiniLM-L6-v2",  # Match our embedding model
+                tokens_per_chunk=self.config.chunk_size
+            )
+        
+        return self._splitter_cache[cache_key]
+    
+    def _chunk_with_recursive_character(self, content: str) -> List[str]:
+        """Chunk using LangChain's RecursiveCharacterTextSplitter."""
+        splitter = self._get_recursive_character_splitter()
+        return splitter.split_text(content)
+    
+    def _chunk_with_character_splitter(self, content: str) -> List[str]:
+        """Chunk using LangChain's CharacterTextSplitter."""
+        splitter = self._get_character_splitter()
+        return splitter.split_text(content)
+    
+    def _chunk_with_token_splitter(self, content: str) -> List[str]:
+        """Chunk using LangChain's TokenTextSplitter."""
+        splitter = self._get_token_splitter()
+        return splitter.split_text(content)
+    
+    def _chunk_with_markdown_headers(self, content: str) -> List[str]:
+        """Chunk using LangChain's MarkdownHeaderTextSplitter."""
+        # Define headers to split on
+        headers_to_split_on = [
+            ("#", "Header 1"),
+            ("##", "Header 2"),
+            ("###", "Header 3"),
+        ]
+        
+        markdown_splitter = MarkdownHeaderTextSplitter(
+            headers_to_split_on=headers_to_split_on,
+            strip_headers=False
+        )
+        
+        # Split by headers first
+        md_header_splits = markdown_splitter.split_text(content)
+        
+        # If the chunks are too large, further split them
+        if any(len(chunk.page_content) > self.config.chunk_size for chunk in md_header_splits):
+            # Use recursive splitter for large chunks
+            recursive_splitter = self._get_recursive_character_splitter()
+            final_chunks = []
+            
+            for chunk in md_header_splits:
+                if len(chunk.page_content) > self.config.chunk_size:
+                    sub_chunks = recursive_splitter.split_text(chunk.page_content)
+                    final_chunks.extend(sub_chunks)
+                else:
+                    final_chunks.append(chunk.page_content)
+            
+            return final_chunks
+        else:
+            return [chunk.page_content for chunk in md_header_splits]
+    
+    def _chunk_with_sentence_transformers(self, content: str) -> List[str]:
+        """Chunk using SentenceTransformersTokenTextSplitter."""
+        splitter = self._get_sentence_transformers_splitter()
+        return splitter.split_text(content)
+    
+    def _create_document_chunks(
+        self, 
+        document_id: str, 
+        original_content: str, 
+        chunks: List[str]
+    ) -> List[DocumentChunk]:
+        """Convert text chunks to DocumentChunk objects with metadata."""
+        document_chunks = []
+        
+        for i, chunk_content in enumerate(chunks):
+            if len(chunk_content.strip()) >= self.config.min_chunk_size:
+                # Calculate position in original document
+                start_pos = self._find_chunk_position(original_content, chunk_content, i)
+                end_pos = start_pos + len(chunk_content) if start_pos != -1 else -1
+                
+                # Calculate overlaps (approximate for LangChain chunks)
+                overlap_prev = min(self.config.chunk_overlap, len(chunk_content)) if i > 0 else 0
+                overlap_next = min(self.config.chunk_overlap, len(chunk_content)) if i < len(chunks) - 1 else 0
+                
+                chunk = DocumentChunk(
+                    chunk_id=f"{document_id}_chunk_{i}",
+                    document_id=document_id,
+                    content=chunk_content.strip(),
+                    chunk_index=i,
+                    start_char=start_pos if start_pos != -1 else None,
+                    end_char=end_pos if end_pos != -1 else None,
+                    word_count=len(chunk_content.split()),
+                    overlap_with_previous=overlap_prev,
+                    overlap_with_next=overlap_next
+                )
+                document_chunks.append(chunk)
+        
+        return document_chunks
+    
+    def _find_chunk_position(self, content: str, chunk: str, chunk_index: int) -> int:
+        """Find the position of a chunk in the original content."""
+        try:
+            # Simple approach: find first occurrence after previous chunks
+            # This is approximate due to LangChain's complex splitting logic
+            search_start = chunk_index * (self.config.chunk_size - self.config.chunk_overlap)
+            search_start = max(0, min(search_start, len(content) - 1))
+            
+            position = content.find(chunk.strip()[:50], search_start)  # Use first 50 chars
+            return position if position != -1 else search_start
+        except Exception:
+            return -1
+    
+    # Keep custom implementations for backward compatibility and specialized use cases
+    def _chunk_fixed_size_legacy(self, content: str) -> List[Tuple[str, int, int]]:
         """Chunk content into fixed-size pieces."""
         
         chunks = []
@@ -120,7 +295,7 @@ class DocumentChunker:
         
         return chunks
     
-    def _chunk_by_sentences(self, content: str) -> List[Tuple[str, int, int]]:
+    def _chunk_by_sentences_legacy(self, content: str) -> List[Tuple[str, int, int]]:
         """Chunk content by sentences, grouping to target size."""
         
         # Split into sentences
@@ -153,7 +328,7 @@ class DocumentChunker:
         
         return chunks
     
-    def _chunk_by_paragraphs(self, content: str) -> List[Tuple[str, int, int]]:
+    def _chunk_by_paragraphs_legacy(self, content: str) -> List[Tuple[str, int, int]]:
         """Chunk content by paragraphs, combining small ones."""
         
         # Split by paragraph breaks
@@ -186,7 +361,20 @@ class DocumentChunker:
         
         return chunks
     
-    def _chunk_by_semantic_sections(self, content: str) -> List[Tuple[str, int, int]]:
+    def _chunk_by_semantic_sections_custom(self, content: str) -> List[str]:
+        """Custom semantic sections chunking (kept for specialized use cases)."""
+        # Convert tuple format to string list for consistency with LangChain
+        tuples = self._chunk_by_semantic_sections_legacy(content)
+        return [chunk_content for chunk_content, _, _ in tuples]
+    
+    def _chunk_overlap_sliding_custom(self, content: str) -> List[str]:
+        """Custom overlap sliding chunking (kept for specialized use cases)."""
+        # Convert tuple format to string list for consistency with LangChain
+        tuples = self._chunk_overlap_sliding_legacy(content)
+        return [chunk_content for chunk_content, _, _ in tuples]
+    
+    # Legacy methods (renamed but kept for specialized functionality)
+    def _chunk_by_semantic_sections_legacy(self, content: str) -> List[Tuple[str, int, int]]:
         """Chunk content by semantic sections (headers, topics)."""
         
         # Look for markdown-style headers
@@ -220,7 +408,7 @@ class DocumentChunker:
         
         return chunks
     
-    def _chunk_overlap_sliding(self, content: str) -> List[Tuple[str, int, int]]:
+    def _chunk_overlap_sliding_legacy(self, content: str) -> List[Tuple[str, int, int]]:
         """Chunk with sliding window and overlap."""
         
         chunks = []
@@ -312,46 +500,101 @@ class DocumentChunker:
 
 # Example usage and testing
 if __name__ == "__main__":
-    # Test the chunker
+    # Test the LangChain-based chunker
     sample_content = """
     # AI Research Assistant
     
     This is the introduction paragraph that explains what the AI Research Assistant does.
-    It provides comprehensive document analysis and question-answering capabilities.
+    It provides comprehensive document analysis and question-answering capabilities using 
+    advanced LangChain text splitters for optimal chunking performance.
     
     ## Document Processing
     
     The system can process various document types including PDFs, text files, and web articles.
     Each document is processed through multiple stages:
     
-    1. Text extraction and cleaning
-    2. Intelligent chunking for vector storage
-    3. Embedding generation using sentence transformers
-    4. Storage in vector database for efficient retrieval
+    1. Text extraction and cleaning with comprehensive preprocessing
+    2. Intelligent chunking using LangChain's battle-tested splitters
+    3. Embedding generation using sentence transformers with proper tokenization
+    4. Storage in vector database for efficient retrieval and search
     
     ## Query Processing
     
     When users submit queries, the system performs semantic search across all stored documents.
-    It uses advanced ranking algorithms to find the most relevant content.
+    It uses advanced ranking algorithms to find the most relevant content chunks.
     The results are then processed by a language model to generate comprehensive answers.
     
     ## Key Features
     
-    - Multi-format document support
-    - Intelligent text chunking
-    - Semantic search capabilities
-    - Source attribution and citations
-    - Confidence scoring for responses
+    - Multi-format document support with intelligent parsing
+    - LangChain-based text chunking with multiple strategies
+    - Semantic search capabilities with vector similarity
+    - Source attribution and citations for transparency
+    - Confidence scoring for responses and reliability assessment
+    
+    ## Advanced Capabilities
+    
+    The system now leverages LangChain's proven text splitting algorithms:
+    - RecursiveCharacterTextSplitter for general-purpose chunking
+    - TokenTextSplitter for token-aware processing
+    - MarkdownHeaderTextSplitter for structured document handling
+    - Custom strategies for specialized use cases
     """
     
     chunker = DocumentChunker()
     
-    # Test different strategies
-    for strategy in ChunkingStrategy:
-        print(f"\n=== Testing {strategy} ===")
-        chunks = chunker.chunk_document("test-doc", sample_content, strategy)
-        print(f"Generated {len(chunks)} chunks")
+    # Test LangChain strategies
+    langchain_strategies = [
+        ChunkingStrategy.RECURSIVE_CHARACTER,
+        ChunkingStrategy.CHARACTER,
+        ChunkingStrategy.MARKDOWN_HEADERS,
+        ChunkingStrategy.TOKEN_BASED,
+        ChunkingStrategy.SENTENCE_TRANSFORMERS
+    ]
+    
+    print("🚀 Testing LangChain-Based Chunking Strategies")
+    print("=" * 60)
+    
+    for strategy in langchain_strategies:
+        try:
+            print(f"\n=== Testing {strategy.value.replace('_', ' ').title()} ===")
+            chunks = chunker.chunk_document("test-doc", sample_content, strategy)
+            print(f"✅ Generated {len(chunks)} chunks")
+            
+            if chunks:
+                avg_size = sum(len(chunk.content) for chunk in chunks) / len(chunks)
+                print(f"   Average chunk size: {avg_size:.0f} characters")
+                
+                # Show first chunk preview
+                first_chunk = chunks[0]
+                print(f"   First chunk preview ({len(first_chunk.content)} chars):")
+                print(f"   {first_chunk.content[:100]}..." if len(first_chunk.content) > 100 else f"   {first_chunk.content}")
         
-        for i, chunk in enumerate(chunks[:2]):  # Show first 2 chunks
-            print(f"\nChunk {i+1} ({len(chunk.content)} chars):")
-            print(chunk.content[:100] + "..." if len(chunk.content) > 100 else chunk.content)
+        except Exception as e:
+            print(f"❌ Error with {strategy}: {e}")
+    
+    # Test custom strategies for comparison
+    custom_strategies = [ChunkingStrategy.SEMANTIC_SECTIONS, ChunkingStrategy.OVERLAP_SLIDING]
+    
+    print(f"\n{'='*60}")
+    print("🛠️  Testing Custom Strategies (Legacy)")
+    
+    for strategy in custom_strategies:
+        try:
+            print(f"\n=== Testing {strategy.value.replace('_', ' ').title()} (Custom) ===")
+            chunks = chunker.chunk_document("test-doc", sample_content, strategy)
+            print(f"✅ Generated {len(chunks)} chunks")
+            
+            if chunks:
+                avg_size = sum(len(chunk.content) for chunk in chunks) / len(chunks)
+                print(f"   Average chunk size: {avg_size:.0f} characters")
+        
+        except Exception as e:
+            print(f"❌ Error with {strategy}: {e}")
+    
+    print(f"\n{'='*60}")
+    print("🎉 LangChain integration complete! Best of both worlds:")
+    print("   ✅ Battle-tested LangChain splitters for reliability")
+    print("   ✅ Custom strategies for specialized use cases") 
+    print("   ✅ Cached splitters for performance")
+    print("   ✅ Consistent DocumentChunk output format")
