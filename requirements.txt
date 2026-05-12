@@ -1,0 +1,30 @@
+# AI Research Assistant - Core Dependencies for Stage 1 & 2
+
+# LangChain ecosystem
+langchain>=0.3.0
+langchain-community>=0.3.0
+langgraph>=0.2.0
+langchain-ollama>=0.2.0
+
+# Data validation and processing
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
+
+# Vector database and embeddings
+chromadb>=0.5.0
+sentence-transformers>=3.0.0
+
+# Document processing
+pypdf2>=3.0.0
+python-docx>=1.1.0
+
+# Utilities
+python-dotenv>=1.0.0
+click>=8.1.0
+rich>=13.0.0
+loguru>=0.7.0
+
+# Development and testing
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
+black>=24.0.0
